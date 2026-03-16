@@ -438,16 +438,16 @@ def test_momentum_single_returns_series(sample_prices):
 
 
 def test_momentum_ensemble_differs_from_single(sample_prices):
-    """앙상블과 단일 12-1M 점수는 달라야 한다."""
+    """Ensemble scores must differ from single 12-1M scores."""
     ensemble = MomentumFactor(ensemble=True).compute(prices=sample_prices)
     single   = MomentumFactor(ensemble=False).compute(prices=sample_prices)
     common   = ensemble.index.intersection(single.index)
     diff = (ensemble.loc[common] - single.loc[common]).abs()
-    assert diff.max() > 1e-6, "앙상블과 단일 점수가 동일 — 앙상블이 적용되지 않은 것"
+    assert diff.max() > 1e-6, "Ensemble and single scores are identical — ensemble may not be applied"
 
 
 def test_momentum_custom_configs(sample_prices):
-    """커스텀 구성 지정이 정상 작동해야 한다."""
+    """Custom lookback configs must be accepted and produce valid scores."""
     f = MomentumFactor(
         ensemble=True,
         lookback_configs=[(6, 1, 0.6), (3, 1, 0.4)],
@@ -458,7 +458,7 @@ def test_momentum_custom_configs(sample_prices):
 
 
 def test_momentum_weights_normalised():
-    """가중치 합이 1이 아니어도 자동 정규화돼야 한다."""
+    """Weights must be automatically normalised even when they do not sum to 1."""
     f = MomentumFactor(
         ensemble=True,
         lookback_configs=[(12, 1, 3.0), (6, 1, 1.0), (3, 1, 1.0)],
@@ -468,7 +468,7 @@ def test_momentum_weights_normalised():
 
 
 def test_momentum_ensemble_backcompat(sample_prices):
-    """ensemble=False이면 기존 단일 룩백과 동일 결과를 내야 한다."""
+    """ensemble=False must produce identical results to a plain single-lookback instance."""
     old = MomentumFactor(ensemble=False, lookback_months=12, skip_months=1)
     new = MomentumFactor(ensemble=False, lookback_months=12, skip_months=1)
     s1 = old.compute(prices=sample_prices)
