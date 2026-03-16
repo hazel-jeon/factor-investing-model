@@ -416,3 +416,63 @@ def test_sector_neutral_scores_differ_from_plain(sample_prices, sample_fundament
     # At least some composite scores should differ
     diff = (plain.loc[common, "composite"] - neutral.loc[common, "composite"]).abs()
     assert diff.max() > 1e-6, "Sector-neutral and plain scores are identical — neutralization had no effect"
+
+
+# ---------------------------------------------------------------------------
+# Momentum Ensemble
+# ---------------------------------------------------------------------------
+
+def test_momentum_ensemble_returns_series(sample_prices):
+    f = MomentumFactor(ensemble=True)
+    s = f.compute(prices=sample_prices)
+    assert isinstance(s, pd.Series)
+    assert s.name == "momentum"
+    assert len(s) > 0
+
+
+def test_momentum_single_returns_series(sample_prices):
+    f = MomentumFactor(ensemble=False, lookback_months=12, skip_months=1)
+    s = f.compute(prices=sample_prices)
+    assert isinstance(s, pd.Series)
+    assert len(s) > 0
+
+
+def test_momentum_ensemble_differs_from_single(sample_prices):
+    """앙상블과 단일 12-1M 점수는 달라야 한다."""
+    ensemble = MomentumFactor(ensemble=True).compute(prices=sample_prices)
+    single   = MomentumFactor(ensemble=False).compute(prices=sample_prices)
+    common   = ensemble.index.intersection(single.index)
+    diff = (ensemble.loc[common] - single.loc[common]).abs()
+    assert diff.max() > 1e-6, "앙상블과 단일 점수가 동일 — 앙상블이 적용되지 않은 것"
+
+
+def test_momentum_custom_configs(sample_prices):
+    """커스텀 구성 지정이 정상 작동해야 한다."""
+    f = MomentumFactor(
+        ensemble=True,
+        lookback_configs=[(6, 1, 0.6), (3, 1, 0.4)],
+    )
+    s = f.compute(prices=sample_prices)
+    assert isinstance(s, pd.Series)
+    assert len(s) > 0
+
+
+def test_momentum_weights_normalised():
+    """가중치 합이 1이 아니어도 자동 정규화돼야 한다."""
+    f = MomentumFactor(
+        ensemble=True,
+        lookback_configs=[(12, 1, 3.0), (6, 1, 1.0), (3, 1, 1.0)],
+    )
+    total = sum(w for _, _, w in f.configs)
+    assert abs(total - 1.0) < 1e-9
+
+
+def test_momentum_ensemble_backcompat(sample_prices):
+    """ensemble=False이면 기존 단일 룩백과 동일 결과를 내야 한다."""
+    old = MomentumFactor(ensemble=False, lookback_months=12, skip_months=1)
+    new = MomentumFactor(ensemble=False, lookback_months=12, skip_months=1)
+    s1 = old.compute(prices=sample_prices)
+    s2 = new.compute(prices=sample_prices)
+    common = s1.index.intersection(s2.index)
+    diff = (s1.loc[common] - s2.loc[common]).abs()
+    assert diff.max() < 1e-9
