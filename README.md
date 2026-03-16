@@ -10,6 +10,8 @@ minimum-variance portfolio optimization, and a full performance visualization su
 
 ## Results
 
+![Performance Dashboard](results/dashboard.png)
+
 Backtest period: **2015-01-01 → 2024-12-31** · Universe: S&P 500 sample (90 tickers)  
 Rebalancing: quarterly · Transaction cost: 0.1% one-way · Portfolio size: 20 stocks
 
