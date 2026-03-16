@@ -18,6 +18,7 @@ env/
 # Results (large files — commit selectively)
 results/*.png
 results/*.csv
+'!results/dashboard.png'
 
 # IDE
 .vscode/
