@@ -3,6 +3,18 @@ factors/scorer.py
 -----------------
 Combines individual factor scores into a single composite score
 and selects the top-N portfolio.
+
+Sector neutralization (optional)
+---------------------------------
+When a ``sector_map`` (pd.Series: ticker -> sector string) is supplied to
+:meth:`score`, each raw factor series is re-expressed as within-sector
+z-scores BEFORE the weighted composite is computed.  This removes sector
+tilts so the model selects the best stocks *within* each sector rather than
+simply overweighting whichever sector happens to screen well on a given date.
+
+The neutralization is applied per-factor independently, then the composite
+is formed from the neutralized scores.  An extra column ``sector`` is
+appended to the returned DataFrame for diagnostics.
 """
 
 from __future__ import annotations
@@ -33,7 +45,11 @@ class FactorScorer:
     ...     (MomentumFactor(), 0.4),
     ...     (SizeFactor(), 0.2),
     ... ])
-    >>> composite = scorer.score(prices=prices, fundamentals=fundamentals)
+    >>> # Plain composite
+    >>> scores = scorer.score(prices=prices, fundamentals=fundamentals)
+    >>> # Sector-neutral composite
+    >>> scores = scorer.score(prices=prices, fundamentals=fundamentals,
+    ...                       sector_map=sector_map)
     """
 
     def __init__(self, factors: list[tuple[BaseFactor, float]]) -> None:
@@ -47,22 +63,29 @@ class FactorScorer:
         prices: Optional[pd.DataFrame] = None,
         fundamentals: Optional[pd.DataFrame] = None,
         as_of: Optional[pd.Timestamp] = None,
+        sector_map: Optional[pd.Series] = None,
     ) -> pd.DataFrame:
         """
         Compute per-factor and composite scores for the current rebalancing date.
 
+        Parameters
+        ----------
+        prices : pd.DataFrame, optional
+        fundamentals : pd.DataFrame, optional
+        as_of : pd.Timestamp, optional
+        sector_map : pd.Series, optional
+            ticker -> sector string mapping.  When provided, each factor score
+            is sector-neutralized before the composite is formed.
+
         Returns
         -------
         pd.DataFrame
-            Columns = individual factor names + ``composite``.
-            Index   = ticker symbols.
+            Columns = individual factor names + ``composite`` [+ ``sector``].
+            Index   = ticker symbols, sorted descending by composite score.
         """
-        kwargs = dict(
-            prices=prices,
-            fundamentals=fundamentals,
-            as_of=as_of,
-        )
+        kwargs = dict(prices=prices, fundamentals=fundamentals, as_of=as_of)
 
+        # 1. Compute raw factor scores
         raw_scores: dict[str, pd.Series] = {}
         for factor, _ in self.factors:
             try:
@@ -77,9 +100,25 @@ class FactorScorer:
         if not raw_scores:
             return pd.DataFrame()
 
-        score_df = pd.DataFrame(raw_scores)
+        # 2. Sector neutralization (applied per-factor before aggregation)
+        if sector_map is not None:
+            neutralized: dict[str, pd.Series] = {}
+            for fname, fseries in raw_scores.items():
+                try:
+                    neutralized[fname] = BaseFactor.sector_neutralize(
+                        fseries, sector_map
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Sector neutralization failed for '%s': %s — using raw score.",
+                        fname, exc,
+                    )
+                    neutralized[fname] = fseries
+            score_df = pd.DataFrame(neutralized)
+        else:
+            score_df = pd.DataFrame(raw_scores)
 
-        # Composite = weighted average, ignoring NaN for a given stock
+        # 3. Composite = weighted average (NaN-aware)
         composite = pd.Series(0.0, index=score_df.index)
         weight_sum = pd.Series(0.0, index=score_df.index)
 
@@ -89,11 +128,14 @@ class FactorScorer:
                 composite += col.fillna(0) * w
                 weight_sum += col.notna().astype(float) * w
 
-        # Re-scale so weights always sum to 1 per stock
         weight_sum = weight_sum.replace(0, float("nan"))
         composite = composite / weight_sum
-
         score_df["composite"] = composite
+
+        # 4. Attach sector label for diagnostics
+        if sector_map is not None:
+            score_df["sector"] = sector_map.reindex(score_df.index).fillna("Unknown")
+
         return score_df.sort_values("composite", ascending=False)
 
     def select_portfolio(

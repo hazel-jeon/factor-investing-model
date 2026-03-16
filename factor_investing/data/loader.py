@@ -128,3 +128,120 @@ def fetch_fundamental_data(
     df = pd.DataFrame(records).set_index("ticker")
     logger.info("Fundamental data ready: %d tickers", len(df))
     return df
+
+
+# ---------------------------------------------------------------------------
+# Sector data
+# ---------------------------------------------------------------------------
+
+# GICS sector mapping built-in (no API call needed for the sample universe).
+# yfinance is used as a fallback for tickers not in this table.
+_SECTOR_MAP: dict[str, str] = {
+    # Information Technology
+    "AAPL": "Information Technology", "MSFT": "Information Technology",
+    "NVDA": "Information Technology", "AVGO": "Information Technology",
+    "CRM":  "Information Technology", "ADBE": "Information Technology",
+    "AMD":  "Information Technology", "TXN":  "Information Technology",
+    "QCOM": "Information Technology", "INTC": "Information Technology",
+    "IBM":  "Information Technology", "INTU": "Information Technology",
+    "ADI":  "Information Technology", "LRCX": "Information Technology",
+    "PANW": "Information Technology", "MU":   "Information Technology",
+    "KLAC": "Information Technology", "AMAT": "Information Technology",
+    "SNPS": "Information Technology", "CDNS": "Information Technology",
+    "MCHP": "Information Technology",
+    # Communication Services
+    "GOOGL":"Communication Services", "META": "Communication Services",
+    "NFLX": "Communication Services", "T":    "Communication Services",
+    # Consumer Discretionary
+    "AMZN": "Consumer Discretionary", "TSLA": "Consumer Discretionary",
+    "HD":   "Consumer Discretionary", "MCD":  "Consumer Discretionary",
+    "NKE":  "Consumer Discretionary", "TGT":  "Consumer Discretionary",
+    "LOW":  "Consumer Discretionary", "F":    "Consumer Discretionary",
+    # Consumer Staples
+    "PG":   "Consumer Staples", "KO":   "Consumer Staples",
+    "PEP":  "Consumer Staples", "COST": "Consumer Staples",
+    "WMT":  "Consumer Staples", "MDLZ": "Consumer Staples",
+    "PM":   "Consumer Staples",
+    # Health Care
+    "LLY":  "Health Care", "UNH":  "Health Care", "JNJ":  "Health Care",
+    "MRK":  "Health Care", "ABBV": "Health Care", "TMO":  "Health Care",
+    "ABT":  "Health Care", "DHR":  "Health Care", "AMGN": "Health Care",
+    "GILD": "Health Care", "SYK":  "Health Care", "REGN": "Health Care",
+    "ISRG": "Health Care", "VRTX": "Health Care", "ZTS":  "Health Care",
+    "ELV":  "Health Care", "CI":   "Health Care", "CVS":  "Health Care",
+    "BMY":  "Health Care",
+    # Financials
+    "BRK-B":"Financials", "JPM":  "Financials", "V":    "Financials",
+    "MA":   "Financials", "BAC":  "Financials", "MS":   "Financials",
+    "GS":   "Financials", "SPGI": "Financials", "BLK":  "Financials",
+    "AXP":  "Financials", "SCHW": "Financials", "C":    "Financials",
+    "WFC":  "Financials", "USB":  "Financials", "ADP":  "Financials",
+    # Industrials
+    "HON":  "Industrials", "CAT":  "Industrials", "UPS":  "Industrials",
+    "BA":   "Industrials", "RTX":  "Industrials", "DE":   "Industrials",
+    "MMM":  "Industrials", "GE":   "Industrials",
+    # Energy
+    "XOM":  "Energy", "CVX":  "Energy",
+    # Materials
+    "LIN":  "Materials",
+    # Real Estate
+    "PLD":  "Real Estate",
+    # Utilities
+    "NEE":  "Utilities",
+}
+
+
+def fetch_sector_map(
+    tickers: list[str],
+    sleep: float = 0.05,
+    use_cache: bool = True,
+) -> pd.Series:
+    """
+    Return a Series mapping ticker -> GICS sector string.
+
+    Strategy
+    --------
+    1. Use the built-in ``_SECTOR_MAP`` table for known tickers (instant, no API).
+    2. Fall back to ``yf.Ticker(t).info['sector']`` for any unknown ticker.
+    3. Tickers where neither source has data are mapped to ``"Unknown"``.
+
+    Parameters
+    ----------
+    tickers : list[str]
+    sleep : float
+        Seconds to wait between yfinance calls for unknown tickers.
+    use_cache : bool
+        If True (default) skip yfinance for any ticker already in the
+        built-in table.  Set False to always refresh from yfinance.
+
+    Returns
+    -------
+    pd.Series
+        index = tickers, values = sector strings.
+    """
+    result: dict[str, str] = {}
+    unknown: list[str] = []
+
+    for t in tickers:
+        if use_cache and t in _SECTOR_MAP:
+            result[t] = _SECTOR_MAP[t]
+        else:
+            unknown.append(t)
+
+    if unknown:
+        logger.info(
+            "Fetching sector data from yfinance for %d unknown tickers …", len(unknown)
+        )
+        for t in unknown:
+            try:
+                info = yf.Ticker(t).info
+                result[t] = info.get("sector") or "Unknown"
+                time.sleep(sleep)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not fetch sector for %s: %s", t, exc)
+                result[t] = "Unknown"
+
+    sector_series = pd.Series(result, name="sector").reindex(tickers).fillna("Unknown")
+    counts = sector_series.value_counts()
+    logger.info("Sector map ready — %d sectors:\n%s", len(counts), counts.to_string())
+    return sector_series

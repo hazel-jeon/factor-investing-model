@@ -310,3 +310,109 @@ def test_vol_targeting_disabled_gives_scalar_one(sample_prices, sample_fundament
     )
     results = bt.run()
     assert (results["vol_scalar"] == 1.0).all()
+
+
+# ---------------------------------------------------------------------------
+# Sector Neutralization
+# ---------------------------------------------------------------------------
+
+def test_sector_neutralize_zero_mean_per_sector():
+    """Within each sector, the neutralized scores must have mean ~0."""
+    scores = pd.Series({
+        "AAPL": 1.5, "MSFT": 0.8, "NVDA": -0.3,   # Tech
+        "JPM":  1.2, "BAC": -0.5, "GS":   0.1,     # Financials
+        "JNJ": -1.0, "UNH":  0.6, "MRK":  0.2,     # Health Care
+    })
+    sector_map = pd.Series({
+        "AAPL": "Tech", "MSFT": "Tech", "NVDA": "Tech",
+        "JPM": "Financials", "BAC": "Financials", "GS": "Financials",
+        "JNJ": "Health Care", "UNH": "Health Care", "MRK": "Health Care",
+    })
+    from factor_investing.factors.base import BaseFactor
+
+    result = BaseFactor.sector_neutralize(scores, sector_map)
+
+    for sector in ["Tech", "Financials", "Health Care"]:
+        members = sector_map[sector_map == sector].index
+        sector_scores = result.loc[members].dropna()
+        assert abs(sector_scores.mean()) < 1e-9, (
+            f"Sector '{sector}' mean = {sector_scores.mean():.6f}, expected ~0"
+        )
+
+
+def test_sector_neutralize_unit_std_per_sector():
+    """Within each sector (with >=3 stocks), std should be ~1."""
+    scores = pd.Series({t: float(i) for i, t in enumerate(
+        ["A", "B", "C", "D", "E", "F"]
+    )})
+    sector_map = pd.Series({"A": "X", "B": "X", "C": "X",
+                             "D": "Y", "E": "Y", "F": "Y"})
+    from factor_investing.factors.base import BaseFactor
+
+    result = BaseFactor.sector_neutralize(scores, sector_map)
+
+    for sector in ["X", "Y"]:
+        members = sector_map[sector_map == sector].index
+        std = result.loc[members].dropna().std(ddof=1)
+        assert abs(std - 1.0) < 1e-9, (
+            f"Sector '{sector}' std = {std:.6f}, expected 1.0"
+        )
+
+
+def test_sector_neutralize_small_sector_returns_nan():
+    """Sectors below min_sector_size should produce NaN, not inflated z-scores."""
+    scores     = pd.Series({"A": 1.0, "B": 2.0, "C": 3.0, "D": 4.0})
+    sector_map = pd.Series({"A": "Big", "B": "Big", "C": "Big", "D": "Tiny"})
+    from factor_investing.factors.base import BaseFactor
+
+    result = BaseFactor.sector_neutralize(scores, sector_map, min_sector_size=3)
+
+    # "Tiny" sector has only 1 member -> should be NaN
+    assert pd.isna(result["D"]), "Single-member sector should yield NaN"
+    # "Big" sector has 3 members -> should be scored
+    assert result[["A", "B", "C"]].notna().all()
+
+
+def test_scorer_sector_neutral_columns(sample_prices, sample_fundamentals):
+    """When sector_map is passed, DataFrame should contain a 'sector' column."""
+    sector_map = pd.Series(
+        {t: ("Tech" if i % 2 == 0 else "Finance")
+         for i, t in enumerate(sample_prices.columns)},
+        name="sector",
+    )
+    scorer = FactorScorer([
+        (ValueFactor(), 0.4),
+        (MomentumFactor(), 0.4),
+        (SizeFactor(), 0.2),
+    ])
+    scores = scorer.score(
+        prices=sample_prices,
+        fundamentals=sample_fundamentals,
+        sector_map=sector_map,
+    )
+    assert "sector" in scores.columns
+    assert "composite" in scores.columns
+
+
+def test_sector_neutral_scores_differ_from_plain(sample_prices, sample_fundamentals):
+    """Sector-neutral composite scores should differ from plain composite scores."""
+    sector_map = pd.Series(
+        {t: ("Tech" if i % 2 == 0 else "Finance")
+         for i, t in enumerate(sample_prices.columns)},
+        name="sector",
+    )
+    scorer = FactorScorer([
+        (ValueFactor(), 0.4),
+        (MomentumFactor(), 0.4),
+        (SizeFactor(), 0.2),
+    ])
+    plain  = scorer.score(prices=sample_prices, fundamentals=sample_fundamentals)
+    neutral = scorer.score(
+        prices=sample_prices,
+        fundamentals=sample_fundamentals,
+        sector_map=sector_map,
+    )
+    common = plain.index.intersection(neutral.index)
+    # At least some composite scores should differ
+    diff = (plain.loc[common, "composite"] - neutral.loc[common, "composite"]).abs()
+    assert diff.max() > 1e-6, "Sector-neutral and plain scores are identical — neutralization had no effect"
