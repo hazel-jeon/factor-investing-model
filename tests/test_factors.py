@@ -14,7 +14,7 @@ import pytest
 from factor_investing.factors import ValueFactor, MomentumFactor, SizeFactor, FactorScorer
 from factor_investing.factors.base import BaseFactor
 from factor_investing.portfolio.metrics import compute_metrics
-
+from factor_investing.portfolio.backtester import Backtester
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -476,3 +476,82 @@ def test_momentum_ensemble_backcompat(sample_prices):
     common = s1.index.intersection(s2.index)
     diff = (s1.loc[common] - s2.loc[common]).abs()
     assert diff.max() < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# Optimizer
+# ---------------------------------------------------------------------------
+
+def test_equal_weight_sums_to_one(sample_prices):
+    from factor_investing.portfolio.optimizer import equal_weight
+    tickers = list(sample_prices.columns[:5])
+    w = equal_weight(sample_prices, tickers)
+    assert abs(w.sum() - 1.0) < 1e-9
+    assert (w == w.iloc[0]).all()  # all weights equal
+
+
+def test_minimum_variance_sums_to_one(sample_prices):
+    from factor_investing.portfolio.optimizer import minimum_variance
+    tickers = list(sample_prices.columns[:8])
+    w = minimum_variance(sample_prices, tickers, cov_lookback=50)
+    assert abs(w.sum() - 1.0) < 1e-6
+
+
+def test_minimum_variance_respects_bounds(sample_prices):
+    from factor_investing.portfolio.optimizer import minimum_variance
+    tickers = list(sample_prices.columns[:8])
+    wmin, wmax = 0.05, 0.30
+    w = minimum_variance(
+        sample_prices, tickers,
+        cov_lookback=50, weight_min=wmin, weight_max=wmax,
+    )
+    assert w.min() >= wmin - 1e-6
+    assert w.max() <= wmax + 1e-6
+
+
+def test_minimum_variance_fewer_than_2_tickers_falls_back(sample_prices):
+    """Single-ticker case must fall back to equal weight without crashing."""
+    from factor_investing.portfolio.optimizer import minimum_variance
+    w = minimum_variance(sample_prices, ["AAPL"], cov_lookback=50)
+    assert abs(w.sum() - 1.0) < 1e-9
+
+
+def test_backtester_accepts_min_var_optimizer(sample_prices, sample_fundamentals):
+    """Backtester should run end-to-end with optimizer='min_var'."""
+    scorer = FactorScorer([
+        (MomentumFactor(), 1.0),
+    ])
+    bt = Backtester(
+        scorer=scorer,
+        prices=sample_prices,
+        fundamentals=sample_fundamentals,
+        rebalance_freq="QS",
+        n_stocks=5,
+        optimizer="min_var",
+        cov_lookback=40,
+    )
+    results = bt.run()
+    assert "portfolio" in results.columns
+    assert results["portfolio"].dropna().shape[0] > 0
+
+
+def test_backtester_invalid_optimizer_raises():
+    """Unknown optimizer string must raise ValueError."""
+    scorer = FactorScorer([(MomentumFactor(), 1.0)])
+    with pytest.raises(ValueError, match="Unknown optimizer"):
+        Backtester(
+            scorer=scorer,
+            prices=pd.DataFrame(),
+            fundamentals=pd.DataFrame(),
+            optimizer="magic",
+        )
+
+
+def test_min_var_weights_differ_from_equal(sample_prices):
+    """Minimum-variance weights should differ from 1/N (given enough data)."""
+    from factor_investing.portfolio.optimizer import equal_weight, minimum_variance
+    tickers = list(sample_prices.columns[:8])
+    w_eq  = equal_weight(sample_prices, tickers)
+    w_mv  = minimum_variance(sample_prices, tickers, cov_lookback=100)
+    diff  = (w_mv - w_eq).abs()
+    assert diff.max() > 1e-4, "min_var weights identical to equal — solver may have failed"
