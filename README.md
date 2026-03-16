@@ -31,12 +31,13 @@ Best model outperforms benchmark by **+0.215 Sharpe points**.
 
 ### Key findings
 
-**Momentum is the dominant alpha source.**
-Value and Size factors added noise rather than signal. The root cause is data
-quality: `yfinance` provides a single point-in-time fundamental snapshot, so
-P/B and P/E ratios used in the 2015 backtest are actually 2024 values — a
-look-ahead bias that corrupts those two factors. Momentum uses only price
-history and is unaffected.
+**Momentum is the only reliable alpha source in this implementation.**
+Value and Size factors are implemented in the codebase but produced noise
+rather than signal in backtests. The root cause is a data quality limitation
+described in detail under [Known Limitations](#known-limitations) below.
+This does **not** mean Value and Size are ineffective as factors — decades of
+academic research confirm they carry genuine return premia. The issue is
+specific to how fundamental data is sourced in this project.
 
 **Multi-lookback ensemble improves signal purity.**
 Combining 12-1M, 6-1M, and 3-1M return windows reduces idiosyncratic noise
@@ -53,6 +54,51 @@ Both techniques are designed to remove market-regime and sector-tilt risks.
 However, Momentum alpha in this universe is concentrated in exactly those
 high-volatility, sector-trending regimes — so scaling them down or
 neutralizing them removes the signal along with the noise.
+
+---
+
+## Known Limitations
+
+### ⚠ Fundamental data is not point-in-time (look-ahead bias in Value and Size)
+
+`fetch_fundamental_data()` calls `yf.Ticker(t).info`, which returns a
+**single snapshot of today's fundamentals** — there is no historical series.
+This means that when the backtester runs a 2015 rebalancing, it uses
+**2024 P/B ratios and market caps** to score stocks, introducing severe
+look-ahead bias into the Value and Size factors.
+
+In practice this is why removing Value and Size improved the Sharpe ratio:
+the factors were selecting stocks based on information that did not exist at
+the time of the trade.
+
+**Momentum is unaffected** because it is computed entirely from adjusted
+closing prices, which are correctly sliced to the rebalancing date.
+
+#### Impact summary
+
+| Factor | Data source | Look-ahead bias | Reliable in backtest? |
+|--------|-------------|-----------------|----------------------|
+| Momentum | Price history (yfinance) | None | Yes |
+| Value (P/B, P/E) | `yf.Ticker.info` snapshot | Severe | No |
+| Size (market cap) | `yf.Ticker.info` snapshot | Severe | No |
+
+#### How to fix this
+
+**Option A — Free, approximate.**
+Use `yf.Ticker(t).financials` and `yf.Ticker(t).balance_sheet` to retrieve
+annual financial statement history, then map each rebalancing date to the
+most recently filed fiscal year. This is not true point-in-time (filing
+delays are ignored) but is vastly better than a single 2024 snapshot.
+
+**Option B — Paid, production-grade.**
+Replace `fetch_fundamental_data()` with a point-in-time data provider such
+as [Sharadar (via Nasdaq Data Link)](https://data.nasdaq.com/databases/SF1),
+[Tiingo](https://www.tiingo.com/), or [Compustat](https://www.spglobal.com/).
+These services store the exact values that were publicly known on each
+historical date, including filing delays and restatements.
+
+Until either option is implemented, **set `--value-weight 0 --size-weight 0`
+when running backtests** to avoid contaminating results with look-ahead bias.
 
 ---
 
@@ -162,10 +208,11 @@ After running, the `results/` directory contains:
 
 ## Design Notes
 
-**No look-ahead bias** — the backtester only uses price data available up to
-each rebalancing date. Fundamental data is a static yfinance snapshot; for a
-production system, replace with point-in-time fundamentals (e.g. Compustat,
-Sharadar).
+**No look-ahead bias in price data** — the backtester only uses price data
+available up to each rebalancing date. However, fundamental data (`fetch_fundamental_data`)
+is a static yfinance snapshot of today's values, which introduces look-ahead
+bias into the Value and Size factors. See [Known Limitations](#known-limitations)
+for the full explanation and remediation paths.
 
 **Winsorise → z-score pipeline** — raw factor values are winsorised at the
 1st / 99th percentile before cross-sectional standardisation, reducing the
