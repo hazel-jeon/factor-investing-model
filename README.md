@@ -61,7 +61,7 @@ neutralizing them removes the signal along with the noise.
 
 ## Known Limitations
 
-### ⚠ Fundamental data is not point-in-time (look-ahead bias in Value and Size)
+### Fundamental data is not point-in-time (look-ahead bias in Value and Size)
 
 `fetch_fundamental_data()` calls `yf.Ticker(t).info`, which returns a
 **single snapshot of today's fundamentals** — there is no historical series.
