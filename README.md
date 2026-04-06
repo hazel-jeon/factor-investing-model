@@ -141,7 +141,7 @@ factor-investing/
 ### 1. Clone & install
 
 ```bash
-git clone https://github.com/yourusername/factor-investing.git
+git clone https://github.com/hazel-jeon/factor-investing.git
 cd factor-investing
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
